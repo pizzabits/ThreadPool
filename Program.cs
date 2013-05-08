@@ -24,10 +24,10 @@ namespace ThreadPool
             // the thread pool task runs.  The thread pool uses background 
             // threads, which do not keep the application running.  (This 
             // is a simple example of a race condition.)
-            Thread.Sleep(1 * 7 * 1000);
+            Thread.Sleep(1 * 4 * 1000);
 
-            Console.WriteLine("Completed {0} tasks using a maximum concurrency of {1} threads.", NumberOfThreadsWrote, ThreadPool.MaxThreadsUsed);
-            Console.WriteLine("Total items queued: {0} and now there are {1} threads in the inner list of the thread pool.", ThreadPool.TotalQueued, ThreadPool.FinishedThreads);
+            Console.WriteLine("Completed {0} tasks using a maximum concurrency of {1} threads.", NumberOfThreadsWrote, ThreadPool.GetMaxThreadsUsed());
+            Console.WriteLine("Total items queued: {0} and now there are {1} threads in the inner list of the thread pool.", ThreadPool.GetTotalQueuedJobs(), ThreadPool.GetNumberOfFinishedThreads());
             Console.WriteLine("Main thread exits.");
         }
 

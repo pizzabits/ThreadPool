@@ -9,26 +9,33 @@ namespace ThreadPool
 {
     public delegate void WaitCallback(Object state);
 
-    //private class 
-
     public static class ThreadPool
     {
-        private static int _maxThreads = 1000;
-        public static int FinishedThreads = 0;
-        public static int TotalQueued = 0;
-        public static int MaxThreadsUsed = 0;
+        private static int _maxThreads = 1000; // an assumption.
+        private static int _finishedThreads = 0;
+        private static int _totalQueued = 0;
+        private static int _maxThreadsUsed = 0;
         private static ConcurrentQueue<WaitCallback> _queue = new ConcurrentQueue<WaitCallback>();
         private static List<Thread> _workers = new List<Thread>(100);
-
-        private static Thread _backgroundThread = new Thread(() =>
+        private static Timer _timer = new Timer(new TimerCallback((state) =>
         {
-            while (true)
-            {
-                DequeueRun();
-                Thread.Sleep(20);
-            }
-        });
+            DequeueRun();
+        }), null, 50, 50);
 
+        public static int GetMaxThreadsUsed()
+        {
+            return _maxThreadsUsed;
+        }
+
+        public static int GetTotalQueuedJobs()
+        {
+            return _totalQueued;
+        }
+
+        public static int GetNumberOfFinishedThreads()
+        {
+            return _finishedThreads;
+        }
         public static Boolean QueueUserWorkItem(WaitCallback callBack)
         {
             if (callBack == null)
@@ -38,20 +45,9 @@ namespace ThreadPool
 
             //check for: NotSupportedException: The common language runtime (CLR) is hosted, and the host does not support this action. 
 
-            lock (_queue)
-            {
-                _queue.Enqueue(callBack);
-                TotalQueued++;
-            }
-
-            lock (_backgroundThread)
-            {
-                if (_backgroundThread.ThreadState == ThreadState.Unstarted)
-                {
-                    _backgroundThread.IsBackground = true;
-                    _backgroundThread.Start();
-                }
-            }
+            _queue.Enqueue(callBack);
+            Interlocked.Increment(ref _totalQueued);
+ 
             return true;
         }
 
@@ -62,7 +58,7 @@ namespace ThreadPool
 
             lock (_workers)
             {
-                if (FinishedThreads > 0) //unprotected access!!!
+                if (_finishedThreads > 0) //not an atomic read
                 { //there may be threads need to be renewed / removed
                     for (int i = 0; i < _workers.Count; i++)
                     {
@@ -73,37 +69,31 @@ namespace ThreadPool
                     }
                 }
 
-                if (_workers.Count > MaxThreadsUsed) //reassign the maximum threads used
+                if (_workers.Count > _maxThreadsUsed) //reassign the maximum threads used
                 {
-                    MaxThreadsUsed = _workers.Count;
+                    _maxThreadsUsed = _workers.Count;
                 }
-                lock (_queue)
+
+                if (_queue.Count > 0 && _maxThreads - _workers.Count > 0)
                 {
-                    if (_queue.Count > 0 && _maxThreads - _workers.Count > 0)
-                    {
-                        _queue.TryDequeue(out wcb); //if there's still work, dequeue something
-                    }
+                    _queue.TryDequeue(out wcb); //if there's still work, dequeue something
                 }
+                
             } //release everything while preparing a new independant thread
 
             if (wcb == null && stoppedThread != null) //dequeued nothing and there exist a stopped thread
             {
-                bool empty = false;
-                lock (_queue) //find out if the queue is empty
-                {
-                    empty = _queue.Count == 0;
-                }
-                if (empty)
+                if (_queue.IsEmpty)
                 {
                     lock (_workers)
                     {
                         if (!_workers.Remove(stoppedThread))
                         {
-                            throw new SystemException("Could not remove thread from the list!");
+                            throw new SystemException("Could not remove a thread from the list!");
                         }
                         else
                         {
-                            Interlocked.Decrement(ref FinishedThreads);
+                            Interlocked.Decrement(ref _finishedThreads);
                         }
                     }
                 }
@@ -130,11 +120,8 @@ namespace ThreadPool
                     }
                     else
                     {
-                        lock (_queue) //let other active threads do the work.
-                        {
-                            _queue.Enqueue(wcb);
-                            wcb = null;
-                        }
+                        _queue.Enqueue(wcb);
+                        wcb = null;
                     }
                 }
                 if (wcb != null)
@@ -160,12 +147,9 @@ namespace ThreadPool
 
                 lock (_workers)
                 {
-                    lock (_queue)
+                    if (!_queue.IsEmpty) //help a non-empty queue to get rid of its load
                     {
-                        if (_queue.Count > 0) //help a non-empty queue to get rid of its load
-                        {
-                            _queue.TryDequeue(out wcb);
-                        }
+                        _queue.TryDequeue(out wcb);
                     }
                 }
 
@@ -175,11 +159,11 @@ namespace ThreadPool
                 }
                 else
                 { //could not dequeue from the queue, terminate the thread
-                    Interlocked.Increment(ref FinishedThreads);
+                    Interlocked.Increment(ref _finishedThreads);
                     return;
                 }
 
-                Thread.Sleep(20); //sleep enough time to switch between threads
+                Thread.Sleep(0); //context switch
             }
         }
     }
